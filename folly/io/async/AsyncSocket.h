@@ -1110,6 +1110,14 @@ class AsyncSocket : public AsyncTransport {
     virtual void fdDetach(AsyncSocket* /* socket */) noexcept = 0;
 
     /**
+     * fdAttach() is invoked when the socket file descriptor is attached.
+     *
+     * @param socket      Socket for which handleNetworkSocketAttached was
+     * invoked.
+     */
+    virtual void fdAttach(AsyncSocket* /* socket */) noexcept {}
+
+    /**
      * move() will be invoked when a new AsyncSocket is being constructed via
      * constructor AsyncSocket(AsyncSocket* oldAsyncSocket) from an AsyncSocket
      * that has an observer attached.
@@ -1312,6 +1320,16 @@ class AsyncSocket : public AsyncTransport {
   void timeoutExpired() noexcept;
 
   /**
+   * Handler for when the file descriptor is attached to the AsyncSocket.
+
+   * This updates the EventHandler to start using the fd and notifies all
+   * observers attached to the socket. This is necessary to let
+   * observers know about an attached fd immediately (i.e., on connection
+   * attempt) rather than when the connection succeeds.
+   */
+  virtual void handleNetworkSocketAttached();
+
+  /**
    * Attempt to read from the socket into a single buffer
    *
    * @param buf      The buffer to read data into.
@@ -1463,6 +1481,7 @@ class AsyncSocket : public AsyncTransport {
   void failByteEvents(const AsyncSocketException& ex);
   virtual void invokeConnectErr(const AsyncSocketException& ex);
   virtual void invokeConnectSuccess();
+  virtual void invokeConnectAttempt();
   void invalidState(ConnectCallback* callback);
   void invalidState(ErrMessageCallback* callback);
   void invalidState(ReadCallback* callback);
@@ -1529,7 +1548,7 @@ class AsyncSocket : public AsyncTransport {
   std::unordered_map<uint32_t, folly::IOBuf*> idZeroCopyBufPtrMap_;
   std::unordered_map<folly::IOBuf*, IOBufInfo> idZeroCopyBufInfoMap_;
 
-  StateEnum state_; ///< StateEnum describing current state
+  StateEnum state_{StateEnum::UNINIT}; ///< StateEnum describing current state
   uint8_t shutdownFlags_; ///< Shutdown state (ShutdownFlags)
   uint16_t eventFlags_; ///< EventBase::HandlerFlags settings
   NetworkSocket fd_; ///< The socket file descriptor
@@ -1557,8 +1576,8 @@ class AsyncSocket : public AsyncTransport {
   WriteRequest* writeReqTail_; ///< End of WriteRequest chain
   std::weak_ptr<ShutdownSocketSet> wShutdownSocketSet_;
   size_t appBytesReceived_; ///< Num of bytes received from socket
-  size_t appBytesWritten_; ///< Num of bytes written to socket
-  size_t rawBytesWritten_; ///< Num of (raw) bytes written to socket
+  size_t appBytesWritten_{0}; ///< Num of bytes written to socket
+  size_t rawBytesWritten_{0}; ///< Num of (raw) bytes written to socket
   // The total num of bytes passed to AsyncSocket's write functions. It doesn't
   // include failed writes, but it does include buffered writes.
   size_t totalAppBytesScheduledForWrite_;

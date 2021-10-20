@@ -255,7 +255,10 @@ constexpr bool kIsSanitize = false;
 // SSE4.2 intrinsics unless -march argument is specified.
 // So cannot unconditionally define __SSE4_2__ in clang.
 #ifndef __clang__
+#if !defined(_M_ARM) && !defined(_M_ARM64)
 #define __SSE4_2__ 1
+#endif // !defined(_M_ARM) && !defined(_M_ARM64)
+
 // compiler specific to compiler specific
 // nolint
 #define __PRETTY_FUNCTION__ __FUNCSIG__
@@ -465,6 +468,12 @@ constexpr auto kIsGlibcxx = false;
 constexpr auto kGlibcxxVer = _GLIBCXX_RELEASE;
 #else
 constexpr auto kGlibcxxVer = 0;
+#endif
+
+#if __GLIBCXX__ && defined(_GLIBCXX_ASSERTIONS)
+constexpr auto kGlibcxxAssertions = true;
+#else
+constexpr auto kGlibcxxAssertions = false;
 #endif
 
 #if _LIBCPP_VERSION

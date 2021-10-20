@@ -23,6 +23,7 @@
 
 #include <folly/CancellationToken.h>
 #include <folly/Executor.h>
+#include <folly/GLog.h>
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/Traits.h>
@@ -31,6 +32,7 @@
 #include <folly/experimental/coro/CurrentExecutor.h>
 #include <folly/experimental/coro/Invoke.h>
 #include <folly/experimental/coro/Result.h>
+#include <folly/experimental/coro/ScopeExit.h>
 #include <folly/experimental/coro/Traits.h>
 #include <folly/experimental/coro/ViaIfAsync.h>
 #include <folly/experimental/coro/WithAsyncStack.h>
@@ -65,7 +67,15 @@ class TaskPromiseBase {
     FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES coroutine_handle<>
     await_suspend(coroutine_handle<Promise> coro) noexcept {
       TaskPromiseBase& promise = coro.promise();
-      folly::popAsyncStackFrameCallee(promise.asyncFrame_);
+      // If the continuation has been exchanged, then we expect that the
+      // exchanger will handle the lifetime of the async stack. See
+      // ScopeExitTaskPromise's FinalAwaiter for more details.
+      //
+      // This is a bit untidy, and hopefully something we can replace with
+      // a virtual wrapper over coroutine_handle that handles the pop for us.
+      if (promise.ownsAsyncFrame_) {
+        folly::popAsyncStackFrameCallee(promise.asyncFrame_);
+      }
       return promise.continuation_;
     }
 
@@ -124,6 +134,10 @@ class TaskPromiseBase {
 
   folly::AsyncStackFrame& getAsyncFrame() noexcept { return asyncFrame_; }
 
+  folly::Executor::KeepAlive<> getExecutor() const noexcept {
+    return executor_;
+  }
+
  private:
   template <typename T>
   friend class folly::coro::TaskWithExecutor;
@@ -131,11 +145,22 @@ class TaskPromiseBase {
   template <typename T>
   friend class folly::coro::Task;
 
+  friend std::tuple<bool, coroutine_handle<>> tag_invoke(
+      cpo_t<co_attachScopeExit>,
+      TaskPromiseBase& p,
+      coroutine_handle<> continuation) noexcept {
+    return {
+        std::exchange(p.ownsAsyncFrame_, false),
+        std::exchange(p.continuation_, continuation),
+    };
+  }
+
   coroutine_handle<> continuation_;
   folly::AsyncStackFrame asyncFrame_;
   folly::Executor::KeepAlive<> executor_;
   folly::CancellationToken cancelToken_;
   bool hasCancelTokenOverride_ = false;
+  bool ownsAsyncFrame_ = true;
 };
 
 template <typename T>
@@ -403,6 +428,16 @@ class FOLLY_NODISCARD TaskWithExecutor {
           << "QueuedImmediateExecutor is not safe and is not supported for coro::Task. "
           << "If you need to run a task inline in a unit-test, you should use "
           << "coro::blockingWait instead.";
+      if constexpr (kIsDebug) {
+        if (dynamic_cast<InlineLikeExecutor*>(promise.executor_.get())) {
+          FB_LOG_ONCE(ERROR)
+              << "InlineLikeExecutor is not safe and is not supported for coro::Task. "
+              << "If you need to run a task inline in a unit-test, you should use "
+              << "coro::blockingWait or write your test using the CO_TEST* macros instead."
+              << "If you are using folly::getCPUExecutor, switch to getGlobalCPUExecutor "
+              << "or be sure to call setCPUExecutor first.";
+        }
+      }
 
       auto& calleeFrame = promise.getAsyncFrame();
       calleeFrame.setReturnAddress();
@@ -624,7 +659,8 @@ class FOLLY_NODISCARD Task {
   template <typename F, typename... A, typename F_, typename... A_>
   friend Task tag_invoke(
       tag_t<co_invoke_fn>, tag_t<Task, F, A...>, F_ f, A_... a) {
-    co_return co_await invoke(static_cast<F&&>(f), static_cast<A&&>(a)...);
+    co_yield co_result(co_await co_awaitTry(
+        invoke(static_cast<F&&>(f), static_cast<A&&>(a)...)));
   }
 
  private:

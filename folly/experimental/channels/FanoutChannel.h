@@ -23,35 +23,67 @@ namespace folly {
 namespace channels {
 
 namespace detail {
-template <typename TValue>
+template <typename ValueType, typename ContextType>
 class IFanoutChannelProcessor;
 }
 
+template <typename TValue>
+struct NoContext {
+  void update(const TValue&) {}
+};
+
 /**
- * A fanout channel allows one to fan out updates from a single input receiver
+ * A fanout channel allows fanning out updates from a single input receiver
  * to multiple output receivers.
  *
  * When a new output receiver is added, an optional function will be run that
  * computes a set of initial values. These initial values will only be sent to
  * the new receiver.
  *
- * Example:
+ * FanoutChannel allows specifying an optional context object. If specified, the
+ * context object must have a void update function:
  *
- *  // Function that returns a receiver:
- *  Receiver<int> getInputReceiver();
+ *   void update(const ValueType&);
  *
- *  // Function that returns an executor
- *  folly::Executor::KeepAlive<folly::SequencedExecutor> getExecutor();
+ * This update function will be called on every value from the input receiver.
+ * The context will be passed to the getInitialUpdates argument to subscribe,
+ * allowing for initial updates to depend on the context. This facilitates the
+ * common pattern of letting new subscribers know where they are starting from.
  *
- *  auto fanoutChannel = createFanoutChannel(getReceiver(), getExecutor());
- *  auto receiver1 = fanoutChannel.newReceiver();
- *  auto receiver2 = fanoutChannel.newReceiver();
- *  auto receiver3 = fanoutChannel.newReceiver([]{ return {1, 2, 3}; });
- *  std::move(fanoutChannel).close();
+ * Example without context:
+ *
+ *   // Function that returns a receiver:
+ *   Receiver<int> getInputReceiver();
+ *
+ *   // Function that returns an executor
+ *   folly::Executor::KeepAlive<folly::SequencedExecutor> getExecutor();
+ *
+ *   auto fanoutChannel = createFanoutChannel(getReceiver(), getExecutor());
+ *   auto receiver1 = fanoutChannel.subscribe();
+ *   auto receiver2 = fanoutChannel.subscribe();
+ *   auto receiver3 = fanoutChannel.subscribe([]{ return {1, 2, 3}; });
+ *
+ * Example with context:
+ *
+ *   struct Context {
+ *     int lastValue{-1};
+ *
+ *     void update(const int& value) {
+ *       lastValue = value;
+ *     }
+ *   };
+ *
+ *   auto fanoutChannel =
+ *       createFanoutChannel(getReceiver(), getExecutor(), Context());
+ *   auto receiver1 = fanoutChannel.subscribe(
+ *       [](const Context& context) { return {context.latestValue}; });
+ *   auto receiver2 = fanoutChannel.subscribe(
+ *       [](const Context& context) { return {context.latestValue}; });
+ *   std::move(fanoutChannel).close();
  */
-template <typename TValue>
+template <typename ValueType, typename ContextType = NoContext<ValueType>>
 class FanoutChannel {
-  using TProcessor = detail::IFanoutChannelProcessor<TValue>;
+  using TProcessor = detail::IFanoutChannelProcessor<ValueType, ContextType>;
 
  public:
   explicit FanoutChannel(TProcessor* processor);
@@ -66,22 +98,26 @@ class FanoutChannel {
 
   /**
    * Returns a new output receiver that will receive all values from the input
-   * receiver. If a getInitialValues parameter is provided, it will be executed
-   * to determine the set of initial values that will (only) go to the new input
    * receiver.
+   *
+   * If a getInitialValues parameter is provided, it will be executed
+   * to determine the set of initial values that will (only) go to the new input
+   * receiver. Other functions on this class should not be called from within
+   * getInitialValues, or a deadlock will occur.
    */
-  Receiver<TValue> getNewReceiver(
-      folly::Function<std::vector<TValue>()> getInitialValues = {});
+  Receiver<ValueType> subscribe(
+      folly::Function<std::vector<ValueType>(const ContextType&)>
+          getInitialValues = {});
 
   /**
-   * Returns whether this fanout channel has any output receivers.
+   * Returns whether this fanout channel has any subscribers.
    */
-  bool anyReceivers();
+  bool anySubscribers() const;
 
   /**
    * Closes the fanout channel.
    */
-  void close(std::optional<folly::exception_wrapper> ex = std::nullopt) &&;
+  void close(folly::exception_wrapper ex = folly::exception_wrapper()) &&;
 
  private:
   TProcessor* processor_;
@@ -90,10 +126,14 @@ class FanoutChannel {
 /**
  * Creates a new fanout channel that fans out updates from an input receiver.
  */
-template <typename TReceiver, typename TValue = typename TReceiver::ValueType>
-FanoutChannel<TValue> createFanoutChannel(
-    TReceiver inputReceiver,
-    folly::Executor::KeepAlive<folly::SequencedExecutor> executor);
+template <
+    typename ReceiverType,
+    typename ValueType = typename ReceiverType::ValueType,
+    typename ContextType = NoContext<typename ReceiverType::ValueType>>
+FanoutChannel<ValueType, ContextType> createFanoutChannel(
+    ReceiverType inputReceiver,
+    folly::Executor::KeepAlive<folly::SequencedExecutor> executor,
+    ContextType context = ContextType());
 } // namespace channels
 } // namespace folly
 

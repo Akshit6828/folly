@@ -19,10 +19,9 @@
 #include <memory>
 
 #include <folly/Memory.h>
-#include <folly/SpinLock.h>
+#include <folly/SharedMutex.h>
 
 namespace folly {
-namespace detail {
 
 /*
  * Stat digests, such as TDigest, can be expensive to merge. It is faster to
@@ -56,9 +55,22 @@ class DigestBuilder {
  private:
   struct alignas(hardware_destructive_interference_size) CpuLocalBuffer {
    public:
-    mutable SpinLock mutex;
+    mutable SharedMutex mutex;
     std::vector<double> buffer;
     std::unique_ptr<DigestT> digest;
+
+    CpuLocalBuffer() noexcept = default;
+
+    CpuLocalBuffer(CpuLocalBuffer&& other) noexcept
+        : buffer{std::move(other.buffer)}, digest{std::move(other.digest)} {}
+
+    CpuLocalBuffer& operator=(CpuLocalBuffer&& other) noexcept {
+      if (this != &other) {
+        buffer = std::move(other.buffer);
+        digest = std::move(other.digest);
+      }
+      return *this;
+    }
   };
 
   //  cpulocalbuffer_alloc custom allocator is necessary until C++17
@@ -72,7 +84,6 @@ class DigestBuilder {
   size_t digestSize_;
 };
 
-} // namespace detail
 } // namespace folly
 
-#include <folly/stats/detail/DigestBuilder-inl.h>
+#include <folly/stats/DigestBuilder-inl.h>

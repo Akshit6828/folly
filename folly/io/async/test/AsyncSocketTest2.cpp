@@ -36,6 +36,7 @@
 #include <folly/io/async/test/AsyncSocketTest.h>
 #include <folly/io/async/test/MockAsyncSocketObserver.h>
 #include <folly/io/async/test/MockAsyncTransportObserver.h>
+#include <folly/io/async/test/TFOTest.h>
 #include <folly/io/async/test/Util.h>
 #include <folly/net/test/MockNetOpsDispatcher.h>
 #include <folly/portability/GMock.h>
@@ -2599,6 +2600,10 @@ TEST(AsyncSocketTest, BufferCallbackKill) {
 
 #if FOLLY_ALLOW_TFO
 TEST(AsyncSocketTest, ConnectTFO) {
+  if (!folly::test::isTFOAvailable()) {
+    GTEST_SKIP() << "TFO not supported.";
+  }
+
   // Start listening on a local port
   TestServer server(true);
 
@@ -2649,6 +2654,10 @@ TEST(AsyncSocketTest, ConnectTFO) {
 }
 
 TEST(AsyncSocketTest, ConnectTFOSupplyEarlyReadCB) {
+  if (!folly::test::isTFOAvailable()) {
+    GTEST_SKIP() << "TFO not supported.";
+  }
+
   // Start listening on a local port
   TestServer server(true);
 
@@ -3053,6 +3062,10 @@ TEST(AsyncSocketTest, TestTFOEagain) {
 // Sending a large amount of data in the first write which will
 // definitely not fit into MSS.
 TEST(AsyncSocketTest, ConnectTFOWithBigData) {
+  if (!folly::test::isTFOAvailable()) {
+    GTEST_SKIP() << "TFO not supported.";
+  }
+
   // Start listening on a local port
   TestServer server(true);
 
@@ -3884,20 +3897,20 @@ TEST_F(AsyncSocketByteEventTest, ObserverAttachedBeforeConnect) {
   clientConn.writeAndReflect(wbuf, flags);
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(4));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 
   // write again to check offsets
   clientConn.netOpsExpectSendmsgWithAncillaryTsFlags(dropWriteFromFlags(flags));
   clientConn.writeAndReflect(wbuf, flags);
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(8));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 TEST_F(AsyncSocketByteEventTest, ObserverAttachedAfterConnect) {
@@ -3921,20 +3934,20 @@ TEST_F(AsyncSocketByteEventTest, ObserverAttachedAfterConnect) {
   clientConn.writeAndReflect(wbuf, flags);
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(4));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 
   // write again to check offsets
   clientConn.netOpsExpectSendmsgWithAncillaryTsFlags(dropWriteFromFlags(flags));
   clientConn.writeAndReflect(wbuf, flags);
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(8));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 TEST_F(
@@ -3977,10 +3990,10 @@ TEST_F(
   // expect no ByteEvents for first observer, four for the second
   EXPECT_THAT(observer->byteEvents, IsEmpty());
   EXPECT_THAT(observer2->byteEvents, SizeIs(4));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 TEST_F(
@@ -4024,10 +4037,10 @@ TEST_F(
   // expect no ByteEvents for first observer, four for the second
   EXPECT_THAT(observer->byteEvents, IsEmpty());
   EXPECT_THAT(observer2->byteEvents, SizeIs(4));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 TEST_F(AsyncSocketByteEventTest, ObserverAttachedAfterWrite) {
@@ -4057,10 +4070,10 @@ TEST_F(AsyncSocketByteEventTest, ObserverAttachedAfterWrite) {
   clientConn.netOpsVerifyAndClearExpectations();
 
   EXPECT_THAT(observer->byteEvents, SizeIs(4));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 TEST_F(AsyncSocketByteEventTest, ObserverAttachedAfterClose) {
@@ -4103,17 +4116,19 @@ TEST_F(AsyncSocketByteEventTest, MultipleObserverAttached) {
 
   // check observer1
   EXPECT_THAT(observer->byteEvents, SizeIs(4));
-  EXPECT_EQ(49, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(49, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(49, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(49, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(49U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(49U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(49U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(49U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 
   // check observer2
   EXPECT_THAT(observer2->byteEvents, SizeIs(4));
-  EXPECT_EQ(49, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(49, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(49, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(49, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(
+      49U, observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(
+      49U, observer2->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(49U, observer2->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(49U, observer2->maxOffsetForByteEventReceived(ByteEventType::ACK));
 }
 
 /**
@@ -4216,10 +4231,10 @@ TEST_F(AsyncSocketByteEventTest, ErrMessageCallbackStillTriggered) {
 
   // observer should get events
   EXPECT_THAT(observer->byteEvents, SizeIs(4));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(0, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(0U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
 
   // err message callbach should get events, too
   EXPECT_EQ(3, errMsgCB.gotByteSeq_);
@@ -4230,10 +4245,10 @@ TEST_F(AsyncSocketByteEventTest, ErrMessageCallbackStillTriggered) {
   clientConn.writeAndReflect(wbuf, flags);
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(8));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
-  EXPECT_EQ(1, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::SCHED));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::TX));
+  EXPECT_EQ(1U, observer->maxOffsetForByteEventReceived(ByteEventType::ACK));
   EXPECT_EQ(6, errMsgCB.gotByteSeq_);
   EXPECT_EQ(6, errMsgCB.gotTimestamp_);
 }
@@ -4355,7 +4370,7 @@ TEST_F(AsyncSocketByteEventTest, MoveByteEventsEnabled) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 49;
+    const auto expectedOffset = 49U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4377,7 +4392,7 @@ TEST_F(AsyncSocketByteEventTest, MoveByteEventsEnabled) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(8)));
   {
-    const auto expectedOffset = 99;
+    const auto expectedOffset = 99U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4413,7 +4428,7 @@ TEST_F(AsyncSocketByteEventTest, WriteThenMoveByteEventsEnabled) {
   clientConn.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 49;
+    const auto expectedOffset = 49U;
     EXPECT_EQ(
         expectedOffset,
         observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4446,7 +4461,7 @@ TEST_F(AsyncSocketByteEventTest, WriteThenMoveByteEventsEnabled) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 99;
+    const auto expectedOffset = 99U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4468,7 +4483,7 @@ TEST_F(AsyncSocketByteEventTest, WriteThenMoveByteEventsEnabled) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(8)));
   {
-    const auto expectedOffset = 149;
+    const auto expectedOffset = 149U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4515,7 +4530,7 @@ TEST_F(AsyncSocketByteEventTest, MoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 49;
+    const auto expectedOffset = 49U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4537,7 +4552,7 @@ TEST_F(AsyncSocketByteEventTest, MoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(8)));
   {
-    const auto expectedOffset = 99;
+    const auto expectedOffset = 99U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4590,7 +4605,7 @@ TEST_F(AsyncSocketByteEventTest, WriteThenMoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 99;
+    const auto expectedOffset = 99U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4612,7 +4627,7 @@ TEST_F(AsyncSocketByteEventTest, WriteThenMoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer2->byteEvents, SizeIs(Ge(8)));
   {
-    const auto expectedOffset = 149;
+    const auto expectedOffset = 149U;
     EXPECT_EQ(
         expectedOffset,
         observer2->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4655,7 +4670,7 @@ TEST_F(AsyncSocketByteEventTest, NoObserverMoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(Ge(4)));
   {
-    const auto expectedOffset = 49;
+    const auto expectedOffset = 49U;
     EXPECT_EQ(
         expectedOffset,
         observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4677,7 +4692,7 @@ TEST_F(AsyncSocketByteEventTest, NoObserverMoveThenEnableByteEvents) {
   clientConn2.netOpsVerifyAndClearExpectations();
   EXPECT_THAT(observer->byteEvents, SizeIs(Ge(8)));
   {
-    const auto expectedOffset = 99;
+    const auto expectedOffset = 99U;
     EXPECT_EQ(
         expectedOffset,
         observer->maxOffsetForByteEventReceived(ByteEventType::WRITE));
@@ -4879,7 +4894,9 @@ TEST_F(
       EXPECT_FALSE(byteEvent.maybeHardwareTs.has_value());
 
       // what we really want to test
-      EXPECT_EQ(expectedInvocation.returnVal, byteEvent.maybeRawBytesWritten);
+      EXPECT_EQ(
+          folly::to_unsigned(expectedInvocation.returnVal),
+          byteEvent.maybeRawBytesWritten);
       EXPECT_EQ(
           expectedInvocation.expectedTotalIovLen,
           byteEvent.maybeRawBytesTriedToWrite);
@@ -4957,7 +4974,9 @@ TEST_F(
       EXPECT_FALSE(byteEvent.maybeHardwareTs.has_value());
 
       // what we really want to test
-      EXPECT_EQ(expectedInvocation.returnVal, byteEvent.maybeRawBytesWritten);
+      EXPECT_EQ(
+          folly::to_unsigned(expectedInvocation.returnVal),
+          byteEvent.maybeRawBytesWritten);
       EXPECT_EQ(
           expectedInvocation.expectedTotalIovLen,
           byteEvent.maybeRawBytesTriedToWrite);
@@ -6614,7 +6633,9 @@ TEST_F(AsyncSocketByteEventTest, PrewriteRawBytesWrittenAndTriedToWrite) {
       EXPECT_FALSE(byteEvent.maybeHardwareTs.has_value());
 
       // what we really want to test
-      EXPECT_EQ(expectedInvocation.returnVal, byteEvent.maybeRawBytesWritten);
+      EXPECT_EQ(
+          folly::to_unsigned(expectedInvocation.returnVal),
+          byteEvent.maybeRawBytesWritten);
       EXPECT_EQ(
           expectedInvocation.expectedTotalIovLen,
           byteEvent.maybeRawBytesTriedToWrite);
@@ -6717,7 +6738,9 @@ TEST_F(AsyncSocketByteEventTest, PrewriteRawBytesWrittenAndTriedToWrite) {
       EXPECT_FALSE(byteEvent.maybeHardwareTs.has_value());
 
       // what we really want to test
-      EXPECT_EQ(expectedInvocation.returnVal, byteEvent.maybeRawBytesWritten);
+      EXPECT_EQ(
+          folly::to_unsigned(expectedInvocation.returnVal),
+          byteEvent.maybeRawBytesWritten);
       EXPECT_EQ(
           expectedInvocation.expectedTotalIovLen,
           byteEvent.maybeRawBytesTriedToWrite);
@@ -7575,13 +7598,42 @@ TEST(AsyncSocket, LifecycleObserverAttachThenDestroySocket) {
   EXPECT_THAT(socket->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket.get()));
   socket->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
 
   InSequence s;
   EXPECT_CALL(*cb, closeMock(socket.get()));
+  EXPECT_CALL(*cb, destroyMock(socket.get()));
+  socket = nullptr;
+  Mock::VerifyAndClearExpectations(cb.get());
+}
+
+TEST(AsyncSocket, LifecycleObserverAttachThenConnectError) {
+  auto cb = std::make_unique<StrictMock<MockAsyncSocketLifecycleObserver>>();
+  // port =1 is unreachble on localhost
+  folly::SocketAddress unreachable{"::1", 1};
+
+  EventBase evb;
+  auto socket = AsyncSocket::UniquePtr(new AsyncSocket(&evb));
+  EXPECT_CALL(*cb, observerAttachMock(socket.get()));
+  socket->addLifecycleObserver(cb.get());
+  EXPECT_THAT(socket->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
+  Mock::VerifyAndClearExpectations(cb.get());
+
+  // the current state machine calls AsyncSocket::invokeConnectionError() twice
+  // for this use-case...
+  EXPECT_CALL(*cb, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb, connectErrorMock(socket.get(), _)).Times(2);
+  EXPECT_CALL(*cb, closeMock(socket.get()));
+  socket->connect(nullptr, unreachable, 1);
+  evb.loop();
+  Mock::VerifyAndClearExpectations(cb.get());
+
   EXPECT_CALL(*cb, destroyMock(socket.get()));
   socket = nullptr;
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7608,14 +7660,18 @@ TEST(AsyncSocket, LifecycleObserverMultipleAttachThenDestroySocket) {
   Mock::VerifyAndClearExpectations(cb1.get());
   Mock::VerifyAndClearExpectations(cb2.get());
 
-  EXPECT_CALL(*cb1, connectMock(socket.get()));
-  EXPECT_CALL(*cb2, connectMock(socket.get()));
+  InSequence s;
+  EXPECT_CALL(*cb1, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb2, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb1, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb2, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb1, connectSuccessMock(socket.get()));
+  EXPECT_CALL(*cb2, connectSuccessMock(socket.get()));
   socket->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb1.get());
   Mock::VerifyAndClearExpectations(cb2.get());
 
-  InSequence s;
   EXPECT_CALL(*cb1, closeMock(socket.get()));
   EXPECT_CALL(*cb2, closeMock(socket.get()));
   EXPECT_CALL(*cb1, destroyMock(socket.get()));
@@ -7751,7 +7807,9 @@ TEST(AsyncSocket, LifecycleObserverDetach) {
   EXPECT_THAT(socket1->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket1.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket1.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket1.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket1.get()));
   socket1->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7779,7 +7837,9 @@ TEST(AsyncSocket, LifecycleObserverMoveResubscribe) {
   EXPECT_THAT(socket1->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket1.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket1.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket1.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket1.get()));
   socket1->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7825,7 +7885,9 @@ TEST(AsyncSocket, LifecycleObserverMoveDoNotResubscribe) {
   EXPECT_THAT(socket1->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket1.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket1.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket1.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket1.get()));
   socket1->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7876,7 +7938,9 @@ TEST(AsyncSocket, LifecycleObserverDetachCallbackAfterConnect) {
   socket->addLifecycleObserver(cb.get());
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket.get()));
   socket->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7896,7 +7960,9 @@ TEST(AsyncSocket, LifecycleObserverDetachCallbackAfterClose) {
   socket->addLifecycleObserver(cb.get());
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket.get()));
   socket->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7920,7 +7986,9 @@ TEST(AsyncSocket, LifecycleObserverDetachCallbackcloseDuringDestroy) {
   socket->addLifecycleObserver(cb.get());
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket.get()));
+  EXPECT_CALL(*cb, fdAttachMock(socket.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket.get()));
   socket->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -7948,7 +8016,8 @@ TEST(AsyncSocket, LifecycleObserverBaseClassMoveNoCrash) {
   EXPECT_THAT(socket1->getLifecycleObservers(), UnorderedElementsAre(cb.get()));
   Mock::VerifyAndClearExpectations(cb.get());
 
-  EXPECT_CALL(*cb, connectMock(socket1.get()));
+  EXPECT_CALL(*cb, connectAttemptMock(socket1.get()));
+  EXPECT_CALL(*cb, connectSuccessMock(socket1.get()));
   socket1->connect(nullptr, server.getAddress(), 30);
   evb.loop();
   Mock::VerifyAndClearExpectations(cb.get());
@@ -8009,6 +8078,7 @@ TEST(AsyncSocket, PreReceivedDataOnly) {
   peekCallback.dataAvailableCallback = [&]() {
     peekCallback.verifyData("hello", 5);
     acceptedSocket->setPreReceivedData(IOBuf::copyBuffer("hello"));
+    EXPECT_TRUE(acceptedSocket->readable());
     acceptedSocket->setReadCB(&readCallback);
   };
   readCallback.dataAvailableCallback = [&]() {

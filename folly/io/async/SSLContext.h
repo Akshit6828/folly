@@ -37,6 +37,8 @@
 
 namespace folly {
 
+class OpenSSLTicketHandler;
+
 /**
  * Override the default password collector.
  */
@@ -485,6 +487,8 @@ class SSLContext {
   void setOptions(long options);
 
 #if FOLLY_OPENSSL_HAS_ALPN
+  std::string getAdvertisedNextProtocols();
+
   /**
    * Set the list of protocols that this SSL context supports. In client
    * mode, this is the list of protocols that will be advertised for Application
@@ -531,12 +535,10 @@ class SSLContext {
   void unsetNextProtocols();
   void deleteNextProtocolsStrings();
 
-  bool getRequireAlpnIfClientSupports() const {
-    return requireAlpnIfClientSupports_;
-  }
+  bool getAlpnAllowMismatch() const { return alpnAllowMismatch_; }
 
-  void setRequireAlpnIfClientSupports(bool require) {
-    requireAlpnIfClientSupports_ = require;
+  void setAlpnAllowMismatch(bool allowMismatch) {
+    alpnAllowMismatch_ = allowMismatch;
   }
 
 #endif // FOLLY_OPENSSL_HAS_ALPN
@@ -579,6 +581,10 @@ class SSLContext {
   }
 
   const SSLAcceptRunner* sslAcceptRunner() { return sslAcceptRunner_.get(); }
+
+  void setTicketHandler(std::unique_ptr<OpenSSLTicketHandler> handler);
+
+  OpenSSLTicketHandler* getTicketHandler() { return ticketHandler_.get(); }
 
   /**
    * Helper to match a hostname versus a pattern.
@@ -650,6 +656,7 @@ class SSLContext {
   static bool initialized_;
 
   std::unique_ptr<SSLAcceptRunner> sslAcceptRunner_;
+  std::unique_ptr<OpenSSLTicketHandler> ticketHandler_;
 
 #if FOLLY_OPENSSL_HAS_ALPN
 
@@ -678,7 +685,7 @@ class SSLContext {
 
   size_t pickNextProtocols();
 
-  bool requireAlpnIfClientSupports_{false};
+  bool alpnAllowMismatch_{true};
 
 #endif // FOLLY_OPENSSL_HAS_ALPN
 

@@ -307,7 +307,7 @@ class Baton {
       // Awoken by the deadline passing.
       if (rv == detail::FutexResult::TIMEDOUT) {
         assert(deadline != (std::chrono::time_point<Clock, Duration>::max()));
-        state_.store(TIMED_OUT, std::memory_order_release);
+        state_.store(TIMED_OUT, std::memory_order_relaxed);
         return false;
       }
 
@@ -317,7 +317,7 @@ class Baton {
       // state_ is the truth even if FUTEX_WAIT reported a matching
       // FUTEX_WAKE, since we aren't using type-stable storage and we
       // don't guarantee reuse.  The scenario goes like this: thread
-      // A's last touch of a Baton is a call to wake(), which stores
+      // A's last touch of a Baton is a call to post(), which stores
       // LATE_DELIVERY and gets an unlucky context switch before delivering
       // the corresponding futexWake.  Thread B sees LATE_DELIVERY
       // without consuming a futex event, because it calls futexWait

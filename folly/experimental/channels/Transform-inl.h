@@ -201,14 +201,14 @@ class TransformProcessorBase : public IChannelCallback {
       while (true) {
         auto outputResult =
             co_await folly::coro::co_awaitTry(outputGen->next());
-        if (!outputResult.hasValue() && !outputResult.hasException()) {
+        if (!outputResult.hasException() && !outputResult->has_value()) {
           break;
         }
         if (cancelToken.isCancellationRequested()) {
           co_return CloseResult();
         }
-        if (outputResult.hasValue()) {
-          sender_->senderPush(std::move(outputResult.value()));
+        if (!outputResult.hasException()) {
+          sender_->senderPush(std::move(outputResult->value()));
         } else {
           // The transform coroutine threw an exception. We will close the
           // output receiver.
@@ -357,11 +357,12 @@ class ResumableTransformProcessor : public TransformProcessorBase<
     auto initializeResult =
         co_await folly::coro::co_awaitTry(initializeTransform_());
     if (initializeResult.hasException()) {
-      co_await processReceiverCancelled(
+      auto closeResult =
           initializeResult.template hasException<OnClosedException>()
-              ? CloseResult()
-              : CloseResult(std::move(initializeResult.exception())),
-          true /* noRetriesAllowed */);
+          ? CloseResult()
+          : CloseResult(std::move(initializeResult.exception()));
+      co_await processReceiverCancelled(
+          std::move(closeResult), true /* noRetriesAllowed */);
       co_return;
     }
     auto [initialValues, inputReceiver] = std::move(initializeResult.value());

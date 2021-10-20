@@ -223,7 +223,7 @@ struct List {
     hazptr_local<1, Atom> hptr;
     return protect_all(val, hptr[0]);
   }
-}; // NodeRC
+}; // List
 
 /** NodeAuto */
 template <template <typename> class Atom = std::atomic>
@@ -875,6 +875,63 @@ void recursive_destruction_test() {
   ASSERT_EQ(c_.dtors(), total);
 }
 
+// Used in cohort_safe_list_children_test
+struct NodeA : hazptr_obj_base_linked<NodeA> {
+  std::atomic<NodeA*> next_{nullptr};
+  int& sum_;
+  int val_;
+
+  NodeA(hazptr_obj_cohort<>& coh, int& sum, int v = 0) : sum_(sum), val_(v) {
+    this->set_cohort_tag(&coh);
+  }
+  ~NodeA() { sum_ += val_; }
+  void set_next(NodeA* ptr) { next_.store(ptr); }
+  template <typename S>
+  void push_links(bool m, S& s) {
+    if (m) {
+      auto p = next_.load();
+      if (p) {
+        s.push(p);
+      }
+    }
+  }
+};
+
+void cohort_safe_list_children_test() {
+  int sum = 0;
+  hazptr_obj_cohort<> cohort;
+  NodeA* p1 = new NodeA(cohort, sum, 1000);
+  NodeA* p2 = new NodeA(cohort, sum, 2000);
+  p2->acquire_link_safe();
+  p1->set_next(p2); // p2 is p1's child
+  hazard_pointer<> h = make_hazard_pointer<>();
+  h.reset_protection(p2);
+  /* When p1 is retired, it is inserted into cohort, then pushed into
+     the domain's tagged list, then when p1 is found unprotected by
+     hazard pointers it will be pushed into cohort's safe list. When
+     p1 is reclaimed, p2 (p1's child) will be automatically retired to
+     the domain's tagged list. */
+  p1->retire();
+  /* Retire enough nodes to invoke asynchronous reclamation until p1
+     and/or p2 are reclaimed. */
+  while (sum == 0) {
+    NodeA* p = new NodeA(cohort, sum);
+    p->retire();
+  }
+  /* At this point p1 must be already reclaimed but not p2 */
+  DCHECK_EQ(sum, 1000);
+  NodeA* p3 = new NodeA(cohort, sum, 3000);
+  p3->retire();
+  /* Retire more nodes to invoke asynchronous reclamation until p3
+     and/or p2 are reclaimed. */
+  while (sum == 1000) {
+    NodeA* p = new NodeA(cohort, sum);
+    p->retire();
+  }
+  /* At this point p3 must be already reclaimed but not p2 */
+  DCHECK_EQ(sum, 4000);
+}
+
 void fork_test() {
   folly::enable_hazptr_thread_pool_executor();
   auto trigger_reclamation = [] {
@@ -1180,6 +1237,10 @@ TEST(HazptrTest, dsched_recursive_destruction) {
   recursive_destruction_test<DeterministicAtomic>();
 }
 
+TEST(HazptrTest, cohort_safe_list_children) {
+  cohort_safe_list_children_test();
+}
+
 TEST(HazptrTest, fork) {
   fork_test();
 }
@@ -1227,6 +1288,8 @@ TEST(HazptrTest, reclamation_without_calling_cleanup) {
   for (auto& t : thr) {
     t.join();
   }
+  while (c_.dtors() == 0)
+    /* Wait for asynchronous reclamation. */;
   ASSERT_GT(c_.dtors(), 0);
 }
 
@@ -1384,7 +1447,7 @@ uint64_t list_hoh_bench(
 uint64_t list_protect_all_bench(
     std::string name, int nthreads, int size, bool provided = false) {
   auto repFn = [&] {
-    List<NodeRC<true>> l(size);
+    List<NodeRC<false>> l(size);
     auto init = [] {};
     auto fn = [&](int tid) {
       if (provided) {

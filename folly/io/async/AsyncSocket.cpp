@@ -571,6 +571,7 @@ AsyncSocket::AsyncSocket(
     uint32_t zeroCopyBufId,
     const SocketAddress* peerAddress)
     : zeroCopyBufId_(zeroCopyBufId),
+      fd_(fd),
       eventBase_(evb),
       writeTimeout_(this, evb),
       ioHandler_(this, evb, fd),
@@ -578,7 +579,6 @@ AsyncSocket::AsyncSocket(
   VLOG(5) << "new AsyncSocket(" << this << ", evb=" << evb << ", fd=" << fd
           << ", zeroCopyBufId=" << zeroCopyBufId << ")";
   init();
-  fd_ = fd;
   disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
   setCloseOnExec();
   state_ = StateEnum::ESTABLISHED;
@@ -588,15 +588,24 @@ AsyncSocket::AsyncSocket(
 }
 
 AsyncSocket::AsyncSocket(AsyncSocket* oldAsyncSocket)
-    : AsyncSocket(
-          oldAsyncSocket->getEventBase(),
-          oldAsyncSocket->detachNetworkSocket(),
-          oldAsyncSocket->getZeroCopyBufId(),
-          &oldAsyncSocket->addr_) {
-  appBytesWritten_ = oldAsyncSocket->appBytesWritten_;
-  rawBytesWritten_ = oldAsyncSocket->rawBytesWritten_;
-  byteEventHelper_ = std::move(oldAsyncSocket->byteEventHelper_);
-  preReceivedData_ = std::move(oldAsyncSocket->preReceivedData_);
+    : zeroCopyBufId_(oldAsyncSocket->getZeroCopyBufId()),
+      state_(oldAsyncSocket->state_),
+      fd_(oldAsyncSocket->detachNetworkSocket()),
+      addr_(oldAsyncSocket->addr_),
+      eventBase_(oldAsyncSocket->getEventBase()),
+      writeTimeout_(this, eventBase_),
+      ioHandler_(this, eventBase_, fd_),
+      immediateReadHandler_(this),
+      appBytesWritten_(oldAsyncSocket->appBytesWritten_),
+      rawBytesWritten_(oldAsyncSocket->rawBytesWritten_),
+      preReceivedData_(std::move(oldAsyncSocket->preReceivedData_)),
+      byteEventHelper_(std::move(oldAsyncSocket->byteEventHelper_)) {
+  VLOG(5) << "move AsyncSocket(" << oldAsyncSocket << "->" << this
+          << ", evb=" << eventBase_ << ", fd=" << fd_
+          << ", zeroCopyBufId=" << zeroCopyBufId_ << ")";
+  init();
+  disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
+  setCloseOnExec();
 
   // inform lifecycle observers to give them an opportunity to unsubscribe from
   // events for the old socket and subscribe to the new socket; we do not move
@@ -619,9 +628,7 @@ void AsyncSocket::init() {
     eventBase_->dcheckIsInEventBaseThread();
   }
   shutdownFlags_ = 0;
-  state_ = StateEnum::UNINIT;
   eventFlags_ = EventHandler::NONE;
-  fd_ = NetworkSocket();
   sendTimeout_ = 0;
   maxReadsPerEvent_ = 16;
   connectCallback_ = nullptr;
@@ -631,9 +638,7 @@ void AsyncSocket::init() {
   writeReqHead_ = nullptr;
   writeReqTail_ = nullptr;
   wShutdownSocketSet_.reset();
-  appBytesWritten_ = 0;
   appBytesReceived_ = 0;
-  rawBytesWritten_ = 0;
   totalAppBytesScheduledForWrite_ = 0;
   sendMsgParamCallback_ = &defaultSendMsgParamsCallback;
 }
@@ -745,6 +750,7 @@ void AsyncSocket::connect(
   assert(fd_ == NetworkSocket());
   state_ = StateEnum::CONNECTING;
   connectCallback_ = callback;
+  invokeConnectAttempt();
 
   sockaddr_storage addrStorage;
   auto saddr = reinterpret_cast<sockaddr*>(&addrStorage);
@@ -763,12 +769,9 @@ void AsyncSocket::connect(
           withAddr("failed to create socket"),
           errnoCopy);
     }
-    disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
-    if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
-      shutdownSocketSet->add(fd_);
-    }
-    ioHandler_.changeHandlerFD(fd_);
 
+    disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
+    handleNetworkSocketAttached();
     setCloseOnExec();
 
     // Put the socket in non-blocking mode
@@ -1908,6 +1911,10 @@ void AsyncSocket::shutdownWriteNow() {
 bool AsyncSocket::readable() const {
   if (fd_ == NetworkSocket()) {
     return false;
+  }
+
+  if (preReceivedData_ && !preReceivedData_->empty()) {
+    return true;
   }
   netops::PollDescriptor fds[1];
   fds[0].fd = fd_;
@@ -3061,6 +3068,22 @@ void AsyncSocket::timeoutExpired() noexcept {
   }
 }
 
+void AsyncSocket::handleNetworkSocketAttached() {
+  VLOG(6) << "AsyncSocket::attachFd(this=" << this << ", fd=" << fd_
+          << ", evb=" << eventBase_ << " , state=" << state_
+          << ", events=" << std::hex << eventFlags_ << ")";
+  for (const auto& cb : lifecycleObservers_) {
+    if (auto dCb = dynamic_cast<AsyncSocket::LifecycleObserver*>(cb)) {
+      dCb->fdAttach(this);
+    }
+  }
+
+  if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
+    shutdownSocketSet->add(fd_);
+  }
+  ioHandler_.changeHandlerFD(fd_);
+}
+
 ssize_t AsyncSocket::tfoSendMsg(
     NetworkSocket fd, struct msghdr* msg, int msg_flags) {
   return detail::tfo_sendmsg(fd, msg, msg_flags);
@@ -3618,6 +3641,14 @@ void AsyncSocket::invalidState(ConnectCallback* callback) {
       AsyncSocketException::ALREADY_OPEN,
       "connect() called with socket in invalid state");
   connectEndTime_ = std::chrono::steady_clock::now();
+  if ((state_ == StateEnum::CONNECTING) || (state_ == StateEnum::ERROR)) {
+    for (const auto& cb : lifecycleObservers_) {
+      if (auto observer = dynamic_cast<AsyncSocket::LifecycleObserver*>(cb)) {
+        // inform any lifecycle observes that the connection failed
+        observer->connectError(this, ex);
+      }
+    }
+  }
   if (state_ == StateEnum::CLOSED || state_ == StateEnum::ERROR) {
     if (callback) {
       callback->connectErr(ex);
@@ -3661,6 +3692,15 @@ void AsyncSocket::invokeConnectErr(const AsyncSocketException& ex) {
   VLOG(5) << "AsyncSocket(this=" << this << ", fd=" << fd_
           << "): connect err invoked with ex: " << ex.what();
   connectEndTime_ = std::chrono::steady_clock::now();
+  if ((state_ == StateEnum::CONNECTING) || (state_ == StateEnum::ERROR)) {
+    // invokeConnectErr() can be invoked when state is {FAST_OPEN, CLOSED,
+    // ESTABLISHED} (!?) and a bunch of other places that are not what this call
+    // back wants. This seems like a bug but work around here while we explore
+    // it independently
+    for (const auto& cb : lifecycleObservers_) {
+      cb->connectError(this, ex);
+    }
+  }
   if (connectCallback_) {
     ConnectCallback* callback = connectCallback_;
     connectCallback_ = nullptr;
@@ -3673,9 +3713,9 @@ void AsyncSocket::invokeConnectSuccess() {
           << "): connect success invoked";
   connectEndTime_ = std::chrono::steady_clock::now();
   bool enableByteEventsForObserver = false;
-  for (const auto& observer : lifecycleObservers_) {
-    observer->connect(this);
-    enableByteEventsForObserver |= ((observer->getConfig().byteEvents) ? 1 : 0);
+  for (const auto& cb : lifecycleObservers_) {
+    cb->connectSuccess(this);
+    enableByteEventsForObserver |= ((cb->getConfig().byteEvents) ? 1 : 0);
   }
   if (enableByteEventsForObserver) {
     enableByteEvents();
@@ -3684,6 +3724,14 @@ void AsyncSocket::invokeConnectSuccess() {
     ConnectCallback* callback = connectCallback_;
     connectCallback_ = nullptr;
     callback->connectSuccess();
+  }
+}
+
+void AsyncSocket::invokeConnectAttempt() {
+  VLOG(5) << "AsyncSocket(this=" << this << ", fd=" << fd_
+          << "): connect attempt";
+  for (const auto& cb : lifecycleObservers_) {
+    cb->connectAttempt(this);
   }
 }
 

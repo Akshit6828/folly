@@ -21,7 +21,6 @@
 #include <folly/concurrency/CacheLocality.h>
 
 namespace folly {
-namespace detail {
 
 template <typename DigestT>
 DigestBuilder<DigestT>::DigestBuilder(size_t bufferSize, size_t digestSize)
@@ -38,7 +37,7 @@ DigestT DigestBuilder<DigestT>::build() {
   digestPtrs.reserve(cpuLocalBuffers_.size());
 
   for (auto& cpuLocalBuffer : cpuLocalBuffers_) {
-    std::unique_lock<SpinLock> g(cpuLocalBuffer.mutex);
+    std::unique_lock<SharedMutex> g(cpuLocalBuffer.mutex);
     valuesVec.push_back(std::move(cpuLocalBuffer.buffer));
     if (cpuLocalBuffer.digest) {
       digestPtrs.push_back(std::move(cpuLocalBuffer.digest));
@@ -71,7 +70,7 @@ template <typename DigestT>
 void DigestBuilder<DigestT>::append(double value) {
   auto cpuLocalBuf = &cpuLocalBuffers_[AccessSpreader<>::cachedCurrent(
       cpuLocalBuffers_.size())];
-  std::unique_lock<SpinLock> g(cpuLocalBuf->mutex);
+  std::unique_lock<SharedMutex> g(cpuLocalBuf->mutex);
   cpuLocalBuf->buffer.push_back(value);
   if (cpuLocalBuf->buffer.size() == bufferSize_) {
     if (!cpuLocalBuf->digest) {
@@ -82,5 +81,4 @@ void DigestBuilder<DigestT>::append(double value) {
   }
 }
 
-} // namespace detail
 } // namespace folly

@@ -18,17 +18,11 @@
 
 #include <folly/GLog.h>
 #include <folly/MapUtil.h>
-#include <folly/SingletonThreadLocal.h>
 #include <folly/experimental/SingleWriterFixedHashMap.h>
 #include <folly/synchronization/Hazptr.h>
 #include <folly/tracing/StaticTracepoint.h>
 
 namespace folly {
-
-namespace {
-using SingletonT =
-    SingletonThreadLocal<RequestContext::StaticContext, RequestContext>;
-}
 
 RequestToken::RequestToken(const std::string& str) {
   auto& cache = getCache();
@@ -614,19 +608,31 @@ void RequestContext::clearContextData(const RequestToken& val) {
   return prevCtx;
 }
 
-RequestContext::StaticContext& RequestContext::getStaticContext() {
-  return SingletonT::get();
+namespace {
+thread_local bool getStaticContextCalled = false;
+}
+
+/* static */ RequestContext::StaticContext& RequestContext::getStaticContext() {
+  getStaticContextCalled = true;
+  return StaticContextThreadLocal::get();
+}
+
+/* static */ RequestContext::StaticContext*
+RequestContext::tryGetStaticContext() {
+  return getStaticContextCalled ? &StaticContextThreadLocal::get() : nullptr;
+}
+
+/* static */ RequestContext::StaticContextAccessor
+RequestContext::accessAllThreads() {
+  return StaticContextAccessor{StaticContextThreadLocal::accessAllThreads()};
 }
 
 /* static */ std::vector<RequestContext::RootIdInfo>
 RequestContext::getRootIdsFromAllThreads() {
   std::vector<RootIdInfo> result;
-  auto accessor = SingletonT::accessAllThreads();
+  auto accessor = RequestContext::accessAllThreads();
   for (auto it = accessor.begin(); it != accessor.end(); ++it) {
-    result.push_back(
-        {it->rootId.load(std::memory_order_relaxed),
-         it.getThreadId(),
-         it.getOSThreadId()});
+    result.push_back(it.getRootIdInfo());
   }
   return result;
 }
@@ -645,7 +651,7 @@ RequestContext::setShallowCopyContext() {
   return child;
 }
 
-RequestContext* RequestContext::get() {
+/* static */ RequestContext* RequestContext::get() {
   auto& context = getStaticContext().requestContext;
   if (!context) {
     static RequestContext defaultContext(0);
@@ -653,4 +659,12 @@ RequestContext* RequestContext::get() {
   }
   return context.get();
 }
+
+/* static */ RequestContext* RequestContext::try_get() {
+  if (auto* staticContext = tryGetStaticContext()) {
+    return staticContext->requestContext.get();
+  }
+  return nullptr;
+}
+
 } // namespace folly

@@ -14,20 +14,12 @@
  * limitations under the License.
  */
 
-#include <folly/concurrency/QueueObserver.h>
-
-namespace {
-std::unique_ptr<folly::QueueObserverFactory>
-make_queue_observer_factory_fallback(const std::string&, size_t) noexcept {
-  return std::unique_ptr<folly::QueueObserverFactory>();
-}
-} // namespace
+#pragma once
 
 namespace folly {
-/* static */ std::unique_ptr<QueueObserverFactory> QueueObserverFactory::make(
-    const std::string& context, size_t numPriorities) {
-  auto f = make_queue_observer_factory ? make_queue_observer_factory
-                                       : make_queue_observer_factory_fallback;
-  return f(context, numPriorities);
-}
+namespace test {
+
+bool isTFOAvailable();
+
+} // namespace test
 } // namespace folly

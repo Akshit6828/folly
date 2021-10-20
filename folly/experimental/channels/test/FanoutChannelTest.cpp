@@ -33,17 +33,19 @@ class FanoutChannelFixture : public Test {
 
   ~FanoutChannelFixture() { executor_.drain(); }
 
-  using TCallback = StrictMock<MockNextCallback<int>>;
+  template <typename T>
+  using Callback = StrictMock<MockNextCallback<T>>;
 
-  std::pair<ChannelCallbackHandle, TCallback*> processValues(
-      Receiver<int> receiver) {
-    auto callback = std::make_unique<TCallback>();
+  template <typename T>
+  std::pair<ChannelCallbackHandle, Callback<T>*> processValues(
+      Receiver<T> receiver) {
+    auto callback = std::make_unique<Callback<T>>();
     auto callbackPtr = callback.get();
     auto handle = consumeChannelWithCallback(
         std::move(receiver),
         &executor_,
         [cbk = std::move(callback)](
-            folly::Try<int> resultTry) mutable -> folly::coro::Task<bool> {
+            folly::Try<T> resultTry) mutable -> folly::coro::Task<bool> {
           (*cbk)(std::move(resultTry));
           co_return true;
         });
@@ -58,36 +60,56 @@ class FanoutChannelFixture : public Test {
 };
 
 TEST_F(FanoutChannelFixture, ReceiveValue_FanoutBroadcastsValues) {
+  struct LatestVersion {
+    int version{-1};
+
+    void update(const int& newVersion) { version = newVersion; }
+  };
+
   auto [inputReceiver, sender] = Channel<int>::create();
-  auto fanoutChannel =
-      createFanoutChannel(std::move(inputReceiver), &executor_);
+  auto fanoutChannel = createFanoutChannel(
+      std::move(inputReceiver), &executor_, LatestVersion());
 
-  auto [handle1, callback1] = processValues(fanoutChannel.getNewReceiver(
-      [] { return toVector(100); } /* getInitialValues */));
-  auto [handle2, callback2] = processValues(fanoutChannel.getNewReceiver(
-      [] { return toVector(200); } /* getInitialValues */));
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 
+  auto [handle1, callback1] = processValues(fanoutChannel.subscribe(
+      [](const auto&) { return toVector(100); } /* getInitialValues */));
+  auto [handle2, callback2] = processValues(fanoutChannel.subscribe(
+      [](const auto&) { return toVector(200); } /* getInitialValues */));
+
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
   EXPECT_CALL(*callback1, onValue(100));
   EXPECT_CALL(*callback2, onValue(200));
+  executor_.drain();
+
   EXPECT_CALL(*callback1, onValue(1));
   EXPECT_CALL(*callback2, onValue(1));
   EXPECT_CALL(*callback1, onValue(2));
   EXPECT_CALL(*callback2, onValue(2));
-  EXPECT_CALL(*callback1, onClosed());
-  EXPECT_CALL(*callback2, onClosed());
-
-  executor_.drain();
-
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
-
   sender.write(1);
   sender.write(2);
   executor_.drain();
 
-  std::move(sender).close();
+  auto [handle3, callback3] = processValues(
+      fanoutChannel.subscribe([](const LatestVersion& latestVersion) {
+        return toVector(latestVersion.version);
+      } /* getInitialValues */));
+
+  EXPECT_CALL(*callback3, onValue(2));
   executor_.drain();
 
-  EXPECT_FALSE(fanoutChannel.anyReceivers());
+  sender.write(3);
+  EXPECT_CALL(*callback1, onValue(3));
+  EXPECT_CALL(*callback2, onValue(3));
+  EXPECT_CALL(*callback3, onValue(3));
+
+  std::move(sender).close();
+  EXPECT_CALL(*callback1, onClosed());
+  EXPECT_CALL(*callback2, onClosed());
+  EXPECT_CALL(*callback3, onClosed());
+  executor_.drain();
+
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 }
 
 TEST_F(FanoutChannelFixture, InputClosed_AllOutputReceiversClose) {
@@ -95,8 +117,8 @@ TEST_F(FanoutChannelFixture, InputClosed_AllOutputReceiversClose) {
   auto fanoutChannel =
       createFanoutChannel(std::move(inputReceiver), &executor_);
 
-  auto [handle1, callback1] = processValues(fanoutChannel.getNewReceiver());
-  auto [handle2, callback2] = processValues(fanoutChannel.getNewReceiver());
+  auto [handle1, callback1] = processValues(fanoutChannel.subscribe());
+  auto [handle2, callback2] = processValues(fanoutChannel.subscribe());
 
   EXPECT_CALL(*callback1, onValue(1));
   EXPECT_CALL(*callback2, onValue(1));
@@ -105,7 +127,7 @@ TEST_F(FanoutChannelFixture, InputClosed_AllOutputReceiversClose) {
 
   executor_.drain();
 
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
 
   sender.write(1);
   executor_.drain();
@@ -113,7 +135,7 @@ TEST_F(FanoutChannelFixture, InputClosed_AllOutputReceiversClose) {
   std::move(sender).close();
   executor_.drain();
 
-  EXPECT_FALSE(fanoutChannel.anyReceivers());
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 }
 
 TEST_F(FanoutChannelFixture, InputThrows_AllOutputReceiversGetException) {
@@ -121,8 +143,8 @@ TEST_F(FanoutChannelFixture, InputThrows_AllOutputReceiversGetException) {
   auto fanoutChannel =
       createFanoutChannel(std::move(inputReceiver), &executor_);
 
-  auto [handle1, callback1] = processValues(fanoutChannel.getNewReceiver());
-  auto [handle2, callback2] = processValues(fanoutChannel.getNewReceiver());
+  auto [handle1, callback1] = processValues(fanoutChannel.subscribe());
+  auto [handle2, callback2] = processValues(fanoutChannel.subscribe());
 
   EXPECT_CALL(*callback1, onValue(1));
   EXPECT_CALL(*callback2, onValue(1));
@@ -131,7 +153,7 @@ TEST_F(FanoutChannelFixture, InputThrows_AllOutputReceiversGetException) {
 
   executor_.drain();
 
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
 
   sender.write(1);
   executor_.drain();
@@ -139,7 +161,7 @@ TEST_F(FanoutChannelFixture, InputThrows_AllOutputReceiversGetException) {
   std::move(sender).close(std::runtime_error("Error"));
   executor_.drain();
 
-  EXPECT_FALSE(fanoutChannel.anyReceivers());
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 }
 
 TEST_F(FanoutChannelFixture, ReceiversCancelled) {
@@ -147,8 +169,8 @@ TEST_F(FanoutChannelFixture, ReceiversCancelled) {
   auto fanoutChannel =
       createFanoutChannel(std::move(inputReceiver), &executor_);
 
-  auto [handle1, callback1] = processValues(fanoutChannel.getNewReceiver());
-  auto [handle2, callback2] = processValues(fanoutChannel.getNewReceiver());
+  auto [handle1, callback1] = processValues(fanoutChannel.subscribe());
+  auto [handle2, callback2] = processValues(fanoutChannel.subscribe());
 
   EXPECT_CALL(*callback1, onValue(1));
   EXPECT_CALL(*callback2, onValue(1));
@@ -158,29 +180,64 @@ TEST_F(FanoutChannelFixture, ReceiversCancelled) {
 
   executor_.drain();
 
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
 
   sender.write(1);
   executor_.drain();
 
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
 
   handle1.reset();
   sender.write(2);
   executor_.drain();
 
-  EXPECT_TRUE(fanoutChannel.anyReceivers());
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
 
   handle2.reset();
   sender.write(3);
   executor_.drain();
 
-  EXPECT_FALSE(fanoutChannel.anyReceivers());
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 
   std::move(sender).close();
   executor_.drain();
 
-  EXPECT_FALSE(fanoutChannel.anyReceivers());
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
+}
+
+TEST_F(FanoutChannelFixture, VectorBool) {
+  auto [inputReceiver, sender] = Channel<bool>::create();
+  auto fanoutChannel =
+      createFanoutChannel(std::move(inputReceiver), &executor_);
+
+  auto [handle1, callback1] = processValues(fanoutChannel.subscribe(
+      [](const auto&) { return toVector(true); } /* getInitialValues */));
+  auto [handle2, callback2] = processValues(fanoutChannel.subscribe(
+      [](const auto&) { return toVector(false); } /* getInitialValues */));
+
+  EXPECT_CALL(*callback1, onValue(true));
+  EXPECT_CALL(*callback2, onValue(false));
+
+  executor_.drain();
+
+  EXPECT_TRUE(fanoutChannel.anySubscribers());
+
+  EXPECT_CALL(*callback1, onValue(true));
+  EXPECT_CALL(*callback2, onValue(true));
+  EXPECT_CALL(*callback1, onValue(false));
+  EXPECT_CALL(*callback2, onValue(false));
+
+  EXPECT_CALL(*callback1, onClosed());
+  EXPECT_CALL(*callback2, onClosed());
+
+  sender.write(true);
+  sender.write(false);
+  executor_.drain();
+
+  std::move(sender).close();
+  executor_.drain();
+
+  EXPECT_FALSE(fanoutChannel.anySubscribers());
 }
 
 class FanoutChannelFixtureStress : public Test {
@@ -227,12 +284,12 @@ TEST_F(FanoutChannelFixtureStress, HandleClosed) {
       std::move(receiver),
       folly::SerialExecutor::create(&fanoutChannelExecutor));
 
-  consumers_.at(0)->startConsuming(fanoutChannel.getNewReceiver());
-  consumers_.at(1)->startConsuming(fanoutChannel.getNewReceiver());
+  consumers_.at(0)->startConsuming(fanoutChannel.subscribe());
+  consumers_.at(1)->startConsuming(fanoutChannel.subscribe());
 
   sleepFor(kTestTimeout / 3);
 
-  consumers_.at(2)->startConsuming(fanoutChannel.getNewReceiver());
+  consumers_.at(2)->startConsuming(fanoutChannel.subscribe());
 
   sleepFor(kTestTimeout / 3);
 
@@ -255,12 +312,12 @@ TEST_F(FanoutChannelFixtureStress, InputChannelClosed) {
       std::move(receiver),
       folly::SerialExecutor::create(&fanoutChannelExecutor));
 
-  consumers_.at(0)->startConsuming(fanoutChannel.getNewReceiver());
-  consumers_.at(1)->startConsuming(fanoutChannel.getNewReceiver());
+  consumers_.at(0)->startConsuming(fanoutChannel.subscribe());
+  consumers_.at(1)->startConsuming(fanoutChannel.subscribe());
 
   sleepFor(kTestTimeout / 3);
 
-  consumers_.at(2)->startConsuming(fanoutChannel.getNewReceiver());
+  consumers_.at(2)->startConsuming(fanoutChannel.subscribe());
 
   sleepFor(kTestTimeout / 3);
 

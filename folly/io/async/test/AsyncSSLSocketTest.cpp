@@ -37,6 +37,7 @@
 #include <folly/io/async/ssl/OpenSSLTransportCertificate.h>
 #include <folly/io/async/test/BlockingSocket.h>
 #include <folly/io/async/test/MockAsyncTransportObserver.h>
+#include <folly/io/async/test/TFOTest.h>
 #include <folly/net/NetOps.h>
 #include <folly/net/NetworkSocket.h>
 #include <folly/net/test/MockNetOpsDispatcher.h>
@@ -193,6 +194,54 @@ TEST(AsyncSSLSocketTest, ConnectWriteReadClose) {
   // read()
   uint8_t readbuf[128];
   uint32_t bytesRead = socket->readAll(readbuf, sizeof(readbuf));
+  EXPECT_EQ(bytesRead, 128);
+  EXPECT_EQ(memcmp(buf, readbuf, bytesRead), 0);
+
+  // close()
+  socket->close();
+
+  cerr << "ConnectWriteReadClose test completed" << endl;
+  EXPECT_EQ(socket->getSSLSocket()->getTotalConnectTimeout().count(), 10000);
+}
+
+TEST(AsyncSSLSocketTest, ConnectWriteReadCloseReadable) {
+  // Same as above, but test AsyncSSLSocket::readable along the way
+
+  // Start listening on a local port
+  WriteCallbackBase writeCallback;
+  ReadCallback readCallback(&writeCallback);
+  HandshakeCallback handshakeCallback(&readCallback);
+  SSLServerAcceptCallback acceptCallback(&handshakeCallback);
+  TestSSLServer server(&acceptCallback);
+
+  // Set up SSL context.
+  std::shared_ptr<SSLContext> sslContext(new SSLContext());
+  sslContext->ciphers("ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH");
+  // sslContext->loadTrustedCertificates("./trusted-ca-certificate.pem");
+  // sslContext->authenticate(true, false);
+
+  // connect
+  auto socket =
+      std::make_shared<BlockingSocket>(server.getAddress(), sslContext);
+  socket->open(std::chrono::milliseconds(10000));
+
+  // write()
+  uint8_t buf[128];
+  memset(buf, 'a', sizeof(buf));
+  socket->write(buf, sizeof(buf));
+
+  // read()
+  uint8_t readbuf[128];
+  // The TLS record includes the full 128 bytes.  Even though we only read 1
+  // byte out of the socket, the rest of the full record decrypted and buffered
+  // in the underlying SSL session.
+  uint32_t bytesRead = socket->read(readbuf, 1);
+  EXPECT_EQ(bytesRead, 1);
+  // The socket has no data pending in the kernel
+  EXPECT_FALSE(socket->getSocket()->AsyncSocket::readable());
+  // But the socket is readable
+  EXPECT_TRUE(socket->getSocket()->readable());
+  bytesRead += socket->readAll(readbuf + 1, sizeof(readbuf) - 1);
   EXPECT_EQ(bytesRead, 128);
   EXPECT_EQ(memcmp(buf, readbuf, bytesRead), 0);
 
@@ -587,35 +636,39 @@ TEST_F(NextProtocolTest, RandomizedAlpnTest) {
   EXPECT_EQ(selectedProtocols.size(), 2);
 }
 
-TEST_F(NextProtocolTest, AlpnRequiredIfClientSupportsTestNoClientProtocol) {
+TEST_F(NextProtocolTest, AlpnNotAllowMismatchNoClientProtocol) {
   clientCtx->setAdvertisedNextProtocols({});
   serverCtx->setAdvertisedNextProtocols({"foo", "bar", "baz"});
-  serverCtx->setRequireAlpnIfClientSupports(true);
+  serverCtx->setAlpnAllowMismatch(false);
 
   connect();
 
   expectHandshakeSuccess();
   expectNoProtocol();
+  EXPECT_EQ(server->getClientAlpns(), std::vector<std::string>({}));
 }
 
-TEST_F(NextProtocolTest, AlpnRequiredIfClientSupportsTestOverlap) {
+TEST_F(NextProtocolTest, AlpnNotAllowMismatchWithOverlap) {
   clientCtx->setAdvertisedNextProtocols({"blub", "baz"});
   serverCtx->setAdvertisedNextProtocols({"foo", "bar", "baz"});
-  serverCtx->setRequireAlpnIfClientSupports(true);
+  serverCtx->setAlpnAllowMismatch(false);
 
   connect();
 
   expectProtocol("baz");
+  EXPECT_EQ(
+      server->getClientAlpns(), std::vector<std::string>({"blub", "baz"}));
 }
 
-TEST_F(NextProtocolTest, AlpnRequiredIfClientSupportsTestNoOverlap) {
+TEST_F(NextProtocolTest, AlpnNotAllowMismatchWithoutOverlap) {
   clientCtx->setAdvertisedNextProtocols({"blub"});
   serverCtx->setAdvertisedNextProtocols({"foo", "bar", "baz"});
-  serverCtx->setRequireAlpnIfClientSupports(true);
+  serverCtx->setAlpnAllowMismatch(false);
 
   connect();
 
   expectHandshakeError();
+  EXPECT_EQ(server->getClientAlpns(), std::vector<std::string>({"blub"}));
 }
 
 #endif
@@ -2850,6 +2903,10 @@ MockAsyncTFOSSLSocket::UniquePtr setupSocketWithFallback(
 }
 
 TEST(AsyncSSLSocketTest, ConnectWriteReadCloseTFOFallback) {
+  if (!folly::test::isTFOAvailable()) {
+    GTEST_SKIP() << "TFO not supported.";
+  }
+
   // Start listening on a local port
   WriteCallbackBase writeCallback;
   ReadCallback readCallback(&writeCallback);
